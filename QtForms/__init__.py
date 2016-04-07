@@ -1,329 +1,245 @@
-"""
-This will handle both the main window and the UDP communication!
-"""
+from PyQt4 import QtGui, QtCore
+import sys
+import QtMainWindow
+from tgxmlParser import tgxmlHandler
+import xml.sax
+from tgsdpvis import visWidget
+from sdpComm import sdpComm
+import time
 
-from PyQt4 import QtGui, QtNetwork
-from PyQt4.QtCore import *
-import QtSpiNNProfilerMDI
-from myTub import *
-from myPlotterT import Twidget
-from myPlotterU import Uwidget
-from myPlotterF import Fwidget
-from myCoreSwitch import Swidget
-import constDef as DEF
-import time # need sleep()
-"""===============================================================================================
-                                             MainGUI
------------------------------------------------------------------------------------------------"""
-class MainWindow(QtGui.QMainWindow, QtSpiNNProfilerMDI.Ui_QtSpiNNProfilerMDI):
-    # The following signals MUST defined here, NOT in the init()
-    sdpUpdate = QtCore.pyqtSignal('QByteArray')  # for streaming data
-    tubUpdate = QtCore.pyqtSignal('QByteArray')  # for tubotron
-    rplUpdate = QtCore.pyqtSignal('QByteArray')  # for cmd communication
-    nChips = 4 # Can be changed by SelectBoard()
+from constDef import *
+from helper import *
+from rig.machine_control import MachineController
 
+class MainWindow(QtGui.QMainWindow, QtMainWindow.Ui_qtMainWindow):
     def __init__(self, parent=None):
         super(MainWindow, self).__init__(parent)
         self.setupUi(self)
-        self.setCentralWidget(self.mdiArea);
+        self.setCentralWidget(self.mdiArea)
         self.statusTxt = QtGui.QLabel("")
         self.statusBar().addWidget(self.statusTxt)
 
-        self.connect(self.action_Tubotron, SIGNAL("triggered()"), SLOT("Tubotron()"))
-        self.connect(self.action_Temperature, SIGNAL("triggered()"), SLOT("Temperature()"))
-        self.connect(self.action_Utilization, SIGNAL("triggered()"), SLOT("Utilization()"))
-        self.connect(self.action_Frequency, SIGNAL("triggered()"), SLOT("Frequency()"))
-        self.connect(self.action_SaveData, SIGNAL("triggered()"), SLOT("SaveData()"))
-        self.connect(self.action_SelectBoard, SIGNAL("triggered()"), SLOT("SelectBoard()"))
-        self.connect(self.action_CoreSwitcher, SIGNAL("triggered()"), SLOT("CoreSwitch()"))
+        self.connect(self.action_Quit, QtCore.SIGNAL("triggered()"), QtCore.SLOT("Quit()"))
+        self.connect(self.action_Load_XML, QtCore.SIGNAL("triggered()"), QtCore.SLOT("loadXML()"))
+        self.connect(self.action_Visualiser, QtCore.SIGNAL("triggered()"), QtCore.SLOT("showVisualiser()"))
+        self.connect(self.action_Send_and_Init, QtCore.SIGNAL("triggered()"), QtCore.SLOT("sendAndInit()"))
+        self.connect(self.actionInspect_SpinConf, QtCore.SIGNAL("triggered()"), QtCore.SLOT("testSpin1()"))
+        self.connect(self.actionSet_Tick, QtCore.SIGNAL("triggered()"), QtCore.SLOT("getSimulationTick()"))
+        self.connect(self.actionStart, QtCore.SIGNAL("triggered()"), QtCore.SLOT("startSim()"))
+        self.connect(self.actionStop, QtCore.SIGNAL("triggered()"), QtCore.SLOT("stopSim()"))
 
-        self.TubSock = QtNetwork.QUdpSocket(self) # this is for Tubotron
-        self.RptSock = QtNetwork.QUdpSocket(self) # this if for report streaming (temperature, utilization, etc)
-        self.RplSock = QtNetwork.QUdpSocket(self) # this for generic reply for specific command request
-        self.initRptSock(DEF.RECV_PORT)
-        self.initRplSock(DEF.REPLY_PORT)
-                
-        self.uw = None
-        self.tw = None
-        self.fw = None
-        self.sw = None
-        # First, trigger the Board type and get the core map
-        self.SelectBoard()
+        self.output = None          # this is a list of list of dict that contains target dependency data
+        self.srcTarget = dict()     # this similar to self.output, but just contains target for SOURCE node
+                                    # (as a dict of a list), e.g: from dag0020, srcTarget = {0: [4,3,2]}
+        self.sdp = sdpComm()
+        self.mc = MachineController(DEF_HOST)
 
-    """
-    ######################### GUI callback ########################### 
-    """
-    @pyqtSlot()
-    def Tubotron(self):
-        if self.action_Tubotron.isChecked():
-            #print "Tubotron is now checked, let's initiate the port-{} opening".format(DEF.TUBO_PORT)
-            result = self.TubSock.bind(DEF.TUBO_PORT)
-            if result is False:
-                print 'Cannot open UDP port-{}'.format(DEF.TUBO_PORT)
-                self.action_Tubotron.setChecked(False)
-                return
-    
-            self.tub = Tubwidget(self)
-            self.subWinTub = QtGui.QMdiSubWindow(self)
-            self.subWinTub.setWidget(self.tub)
-            self.mdiArea.addSubWindow(self.subWinTub)
-            self.subWinTub.setGeometry(0,0,self.tub.width(),self.tub.height())
-            self.tub.show()
-            initialMsg = "Tubotron opened at port-%d" % DEF.TUBO_PORT
-            self.tub.console.insertPlainText(initialMsg)
-            self.TubSock.readyRead.connect(self.readTubSDP)
-            self.tubUpdate.connect(self.tub.newData)
+    @QtCore.pyqtSlot()
+    def Quit(self):
+        # TODO: clean up...
+        self.close()
+
+    @QtCore.pyqtSlot()
+    def showVisualiser(self):
+        self.vis = visWidget()
+        self.vis.setGeometry(0,0,1024,1024)
+        self.vis.show()
+
+
+    @QtCore.pyqtSlot()
+    def loadXML(self):
+        print "Loading XML..."
+        fullPathFileName = QtGui.QFileDialog.getOpenFileName(self, "Open XML file", "./", "*.xml")
+        if not fullPathFileName:
+            print "Cancelled!"
         else:
-            self.tubUpdate.disconnect(self.tub.newData)
-            self.tub.okToClose = True
-            self.TubSock.close()
-            self.tub.close()
-            #self.mdiArea.removeSubWindow(self.subWinTub) -> this will create segmentation fault
-            self.subWinTub.close()
+            print "Processing ", fullPathFileName
+            parser = xml.sax.make_parser()
 
-    @pyqtSlot()
-    def Temperature(self):
-        if self.action_Temperature.isChecked():
-            self.tw = Twidget(self.nChips, self); # let's try with 4 chips
-            self.sdpUpdate.connect(self.tw.newData)     # when defining signal-slot in pyqt, the type can be omitted
-            self.tw.cbMode.setCurrentIndex(1)
-            self.subWinTw = QtGui.QMdiSubWindow(self)
-            self.mdiArea.addSubWindow(self.subWinTw)
-            self.subWinTw.setWidget(self.tw)
-            self.subWinTw.setGeometry(400,0,600,400)
-            self.tw.show()
-        else:
-            self.sdpUpdate.disconnect(self.tw.newData)     # when defining signal-slot in pyqt, the type can be omitted
-            self.tw.okToClose = True
-            self.tw.close()
-            self.subWinTw.close()
+            # turn off namespace
+            parser.setFeature(xml.sax.handler.feature_namespaces, 0)
 
-    @pyqtSlot()
-    def Utilization(self):
-        if self.action_Utilization.isChecked():
-            #self.uw = Uwidget(self.nChips, self); # let's try with 4 chips
-            self.uw = Uwidget(self.nChips); # let's try with 4 chips
-            self.sdpUpdate.connect(self.uw.newData)     # when defining signal-slot in pyqt, the type can be omitted
-            self.uw.cbMode.setCurrentIndex(1)
-            #self.subWinUw = QtGui.QMdiSubWindow()       # mo move it outside mdiArea because it is too big!!!
-            #self.subWinUw = QtGui.QMdiSubWindow(self) #--> this will make it is contained in the main Window
-            #self.mdiArea.addSubWindow(self.subWinUw)
-            #self.subWinUw.setWidget(self.uw)
-            #self.subWinUw.setGeometry(400,400,600,400)
-            # Then give it the p2v coremap
-            for i in range(self.nChips):
-                cpuVal = self.p2vMap[i]
-                self.uw.updateP2Vmap(i, cpuVal)
-            self.uw.showMaximized()
+            # override the default ContextHandler
+            Handler = tgxmlHandler()
+            parser.setContentHandler(Handler)
+            parser.parse(str(fullPathFileName))
 
-        else:
-            self.sdpUpdate.disconnect(self.uw.newData)     # when defining signal-slot in pyqt, the type can be omitted
-            self.uw.okToClose = True
-            self.uw.close()
-            #self.subWinUw.close()
+            """ Debugging:
+            print "Link Payload"
+            for nodes in Handler.Nodes:
+                print nodes.Id, ":",
+                for target in nodes.Target:
+                    print target.destId, "(", target.nPkt, ")",
+                print
+            print
 
-    @pyqtSlot()
-    def Frequency(self):
-        if self.action_Frequency.isChecked():
-            self.fw = Fwidget(self.nChips, self); # let's try with 4 chips
-            self.sdpUpdate.connect(self.fw.newData)     # when defining signal-slot in pyqt, the type can be omitted
-            self.subWinFw = QtGui.QMdiSubWindow(self)
-            self.mdiArea.addSubWindow(self.subWinFw)
-            self.subWinFw.setWidget(self.fw)
-            self.subWinFw.setGeometry(1000,0,800,1000)
-            self.fw.show()
-        else:
-            self.sdpUpdate.disconnect(self.fw.newData)     # when defining signal-slot in pyqt, the type can be omitted
-            self.fw.okToClose = True
-            self.fw.close()
-            self.subWinFw.close()
 
-    @pyqtSlot()
-    def SaveData(self):
-        if self.action_SaveData.isChecked():
-            print "SaveData is now checked"
-        else:
-            print "SaveData is now not checked"
+            print "Target Dependency"
+            for nodes in Handler.Nodes:
+                print nodes.Id, ":",
+                for target in nodes.Target:
+                    print target.destId, "(",
+                    for dep in target.Dep:
+                        print dep.srcId,
+                    print "), ",
+                print
 
-    @pyqtSlot()
-    def SelectBoard(self):
-        msgBox = QtGui.QMessageBox()
-        msgBox.setText("Select the SpiNNaker board.")
-        msgBox.setInformativeText("Which board are you using?")
-        bSpiNN3 = msgBox.addButton("SpiNN-3", QtGui.QMessageBox.ActionRole)
-        bSpiNN5 = msgBox.addButton("SpiNN-5", QtGui.QMessageBox.ActionRole)
-        bCancel = msgBox.addButton(QtGui.QMessageBox.Cancel)
-        msgBox.exec_()
-        if msgBox.clickedButton() == bSpiNN3:
-            self.nChips = 4
-            self.p2vMap = [list() for i in range(4)]   # Prepare the coremap list 
-        elif msgBox.clickedButton() == bSpiNN5:
-            self.nChips = 48
-            self.p2vMap = [list() for i in range(48)]  # Prepare the coremap list
-        else:
-            print "Still using {}-chips".format(self.nChips)
+
+            print "Target Dependency"
+            for n in range(Handler.NumberOfNodes):
+                print "nTarget for node-{} = {}".format(n, Handler.Nodes[n].numTarget)
+                for t in range(Handler.Nodes[n].numTarget):
+                    print "nDep for Target-{} in Node-{} = {}".format(t, n, Handler.Nodes[n].Target[t].nDependant)
+                    for d in range(Handler.Nodes[n].Target[t].nDependant):
+                        print "Source-ID-idx-{} = {}".format(d,Handler.Nodes[n].Target[t].Dep[d].srcId),
+                    print
+                    for d in range(Handler.Nodes[n].Target[t].nDependant):
+                        print "nTriggerPkt-ID-idx-{} = {}".format(d,Handler.Nodes[n].Target[t].Dep[d].nTriggerPkt),
+                    print
+                print "\n\n"
+            """
+
+            """ Let's put the c-like struct as a list:
+                Let's create a variable cfg, which is a list of a dict.
+                Then, let's create a variable dag, which is a list of cfg. Hence, dag is a list of a list of a dict.
+            """
+            dag = list()
+            for nodes in Handler.Nodes:
+                cfg = list()
+                srcPayload = list()
+                srcFound = False
+                for target in nodes.Target:
+                    dct = dict()
+                    dct['nodeID'] = nodes.Id
+                    dct['destID'] = target.destId
+                    dct['nPkt'] = target.nPkt
+                    dct['nDependant'] = target.nDependant
+                    for d in range(target.nDependant):
+                        srcIDkey = "dep{}_srcID".format(d)
+                        nTriggerPktkey = "dep{}_nTriggerPkt".format(d)
+                        dct[srcIDkey] = target.Dep[d].srcId
+                        dct[nTriggerPktkey] = target.Dep[d].nTriggerPkt
+                        # also search for SOURCE dependant
+                        if target.Dep[d].srcId==DEF_SOURCE_ID:
+                            srcFound = True
+                            srcPayload.append(target.Dep[d].nTriggerPkt)
+                    cfg.append(dct)
+                    # and put the payload to the current word in the dict
+                if srcFound:
+                    self.srcTarget[nodes.Id] = srcPayload
+                dag.append(cfg)
+
+            self.initMap()
+            self.output = dag
+            #self.output = experiment_dag0020()
+
+
+            # for debugging:
+            print "SpiNNaker usage  :", self.TGmap
+            print "TG configuration :", self.output
+            print "Source Target    :", self.srcTarget
+
+
+    def initMap(self):
+        # SOURCE and SINK send to chip<0,0>, since it is connected to ethernet
+        # node-0, send to chip<1,0> == map[1] in the CHIP_LIST_48
+        # node-1, send to chip<2,0> == map[2]
+        # node-2, send to chip<3,0> == map[3]
+        # node-3, send to chip<4,0> == map[4]
+        # node-4, send to chip<0,1> == map[5]
+        # node-5, send to chip<1,1> == map[6]
+        # node-6, send to chip<2,1> == map[7]
+        # node-7, send to chip<3,1> == map[8]
+        # node-8, send to chip<4,1> == map[9]
+        # let's put those in a "map" and "cfg" variables
+        # TODO (future): use rig to find out the available chips (undead ones?)
+
+        map = [-1 for _ in range(48)]
+        for i in range(9):
+            map[i+1] = i    # we start from i+1 because chip<0,0> will be used for SOURCE and SINK
+        map[0] = DEF_SOURCE_ID
+        self.TGmap = map
+
+    @QtCore.pyqtSlot()
+    def testSpin1(self):
+        """
+        send a request to dump tgsdp configuration data
+        sendSDP(self, flags, tag, dp, dc, dax, day, cmd, seq, arg1, arg2, arg3, bArray):
+        """
+        f=NO_REPLY
+        t=DEF_SEND_IPTAG
+        p = DEF_SDP_CONF_PORT
+        c = DEF_SDP_CORE
+        m = TGPKT_HOST_ASK_REPORT
+
+        for item in self.TGmap:
+            if item != -1 and item != DEF_SOURCE_ID:
+                x, y = getChipXYfromID(self.TGmap, item)
+                #print "Sending a request to <{},{}:{}>".format(x,y,c)
+                self.sdp.sendSDP(f,t,p,c,x,y,m,0,0,0,0,None)
+                time.sleep(DEF_SDP_TIMEOUT)
+
+    @QtCore.pyqtSlot()
+    def sendAndInit(self):
+        """
+        will send aplx to corresponding chip and initialize/configure the chip
+        Assuming that the board has been booted?
+        """
+
+        if self.output==None:
+            QtGui.QMessageBox.information(self, "Information", "No valid network structure yet!")
             return
-            
-        #Display on status bar
-        if self.nChips == 4:
-            self.statusTxt.setText("Using SpiNN-3 board")
-        else:
-            self.statusTxt.setText("Using SpiNN-5 board")
-        
-        #Inform widgets
-        if self.uw is not None:
-            self.uw.updateNChips(self.nChips)
-        if self.tw is not None:
-            self.tw.updateNChips(self.nChips)
-        if self.fw is not None:
-            self.fw.updateNChips(self.nChips)
-        if self.sw is not None:
-            self.sw.updateNChips(self.nChips)
 
-        #Send request for p2v
-        self.askP2Vmap()
+        # First, need to translate from node-ID to chip position <x,y>, including the SOURCE and SINK node
+        # use self.TGmap
+        print "Do translation from node to chip..."
+        self.xSrc, self.ySrc = getChipXYfromID(self.TGmap, DEF_SOURCE_ID)
+        appCores = dict()
+        for item in self.TGmap:
+            if item != -1 and item != DEF_SOURCE_ID:
+                x, y = getChipXYfromID(self.TGmap, item)
+                appCores[(x,y)] = [1]
 
-    @pyqtSlot()
-    def CoreSwitch(self):
-        if self.action_CoreSwitcher.isChecked():
-            self.sw = Swidget(self.nChips, self); # let's try with 4 chips
-            self.rplUpdate.connect(self.sw.newData)     # will be used for checking disabled-CPUs
-            self.subWinSw = QtGui.QMdiSubWindow(self)
-            self.mdiArea.addSubWindow(self.subWinSw)
-            self.subWinSw.setWidget(self.sw)
-            self.subWinSw.setGeometry(600,400,self.sw.width()+10,self.sw.height()+20)
-            for i in range(self.nChips):
-                cpuVal = self.p2vMap[i]
-                self.sw.updateP2Vmap(i, cpuVal)
-            self.sw.show()
-        else:
-            self.rplUpdate.disconnect(self.sw.newData)     # when defining signal-slot in pyqt, the type can be omitted
-            self.sw.okToClose = True
-            self.sw.close()
-            self.subWinSw.close()
-            
+        print "Application cores :", appCores
 
-    """
-    ############################ Reading Tubotron Socket ###########################
-    """
-    @pyqtSlot()
-    def readTubSDP(self):
-        while self.TubSock.hasPendingDatagrams():
-            szData = self.TubSock.pendingDatagramSize()
-            datagram, host, port = self.TubSock.readDatagram(szData)
-            self.tubUpdate.emit(datagram)
+        # Second, send the aplx (tgsdp.aplx and srcsink.aplx) to the corresponding chip
+        # example: mc.load_application("bla_bla_bla.aplx", {(0,0):[1,2,10,17]}, app_id=16)
+        # so, the chip is a tupple and cores is in a list!!!
+        # Do you want something nice? Use QFileDialog
+        print "Send the aplx to the corresponding chip..."
+        srcsinkaplx = "/local/new_home/indi/Projects/P/Graceful_TG_SDP_virtualenv/src/aplx/srcsink.aplx"
+        tgsdpaplx = "/local/new_home/indi/Projects/P/Graceful_TG_SDP_virtualenv/src/aplx/tgsdp.aplx"
+        self.mc.load_application(srcsinkaplx, {(self.xSrc, self.ySrc):[1]}, app_id=APPID_SRCSINK)
+        self.mc.load_application(tgsdpaplx, appCores, app_id=APPID_TGSDP)
 
-    """
-    ############################ Streaming Report Socket ###########################
-    """
-    def initRptSock(self, port):
-        print "Try opening port-{} for streaming Profiler Report...".format(port),
-        #result = self.sock.bind(QtNetwork.QHostAddress.LocalHost, DEF.RECV_PORT) --> problematik dengan penggunaan LocalHost
-        result = self.RptSock.bind(port)
-        if result is False:
-            print 'failed! Cannot open UDP port-{}'.format(port)
-        else:
-            print "done!"
-            self.RptSock.readyRead.connect(self.readRptSDP)
+        # Third, send the configuration to the corresponding node
+        print "Sending the configuration data to the corresponding chip..."
 
-    @pyqtSlot()
-    def readRptSDP(self):
-        while self.RptSock.hasPendingDatagrams():
-            szData = self.RptSock.pendingDatagramSize()
-            datagram, host, port = self.RptSock.readDatagram(szData)
-            self.sdpUpdate.emit(datagram)
+        for node in self.output: # self.output should be a list of a list of a dict
+            self.sdp.sendConfig(self.TGmap, node)
 
-    """
-    ############################ CMD communication Socket ###########################
-    """
-    def initRplSock(self, port):
-        print "Try opening port-{} for CMD communication...".format(port),
-        result = self.RplSock.bind(port)
-        if result is False:
-            print 'failed! Cannot open UDP port-{}'.format(port)
-        else:
-            print "done!"
-            self.RplSock.readyRead.connect(self.readRplSDP)
+        # TODO: send the source target list!!!
+        self.sdp.sendSourceTarget(self.TGmap, self.srcTarget)   # butuh TGmap karena butuh xSrc dan ySrc
 
-    @pyqtSlot()
-    def readRplSDP(self):
-        while self.RplSock.hasPendingDatagrams():
-            szData = self.RplSock.pendingDatagramSize()
-            datagram, host, port = self.RplSock.readDatagram(szData)
-            self.rplUpdate.emit(datagram) # Let the other widget knows it as well, eq: disabledCPU
-            # See if it contains core map
-            if len(datagram)==DEF.HOST_REQ_CPU_MAP_REPLY_SIZE:
-                #print "Receiving p2v core map with length-%d" % len(datagram)
-                fmt = "<H4BH2B2H3I20B"
-                pad, flags, tag, dp, sp, da, say, sax, cmd, seq, arg1, arg2, arg3, \
-                cpu0, cpu1, cpu2, cpu3, cpu4, cpu5, cpu6, cpu7, cpu8, cpu9, cpu10, cpu11, \
-                cpu12, cpu13, cpu14, cpu15, cpu16, cpu17, cpu18, cpu19 = struct.unpack(fmt, datagram)
-                if cmd==DEF.HOST_REQ_CPU_MAP: # is it really the p2v core map?
-                    if self.nChips==4:
-                        cmap = DEF.CHIP_LIST_4
-                    else:
-                        cmap = DEF.CHIP_LIST_48
-                    idx = self.getChipIndex(cmap, sax, say) # get linear chip-ID
-                    cpuVal = [cpu0, cpu1, cpu2, cpu3, cpu4, cpu5, cpu6, cpu7, cpu8, cpu9, cpu10, cpu11, cpu12, cpu13, cpu14, cpu15, cpu16, cpu17]
-                    self.p2vMap[idx] = cpuVal
-                    if self.uw is not None:
-                        self.uw.updateP2Vmap(idx, cpuVal) # only uw needs core map!!!
-                    if self.sw is not None:
-                        self.sw.updateP2Vmap(idx, cpuVal)
-            
-    """
-    ############################# Misc. Functions ##################################
-    askP2Vmap() : asks physical to virtual core map
-    sendSDP()   : sending SDP packet to SpiNNaker
-    closeEvent(): there's special treatment for uw
-    """
-    def askP2Vmap(self):
-        if self.nChips==4:
-            Coremap = DEF.CHIP_LIST_4
-        else:
-            Coremap = DEF.CHIP_LIST_48
-        for i in range(self.nChips):
-            #print "Asking p2v core map for chip<{},{}>".format(Coremap[i][0], Coremap[i][1])
-            self.sendSDP(DEF.NO_REPLY, DEF.SEND_IPTAG, DEF.SDP_PORT, DEF.SDP_CORE, \
-                         Coremap[i][0], Coremap[i][1], DEF.HOST_REQ_CPU_MAP, 0, 0, 0, 0, None)
-            time.sleep(0.1)
-            
+        print "Sending network map..."
+        self.sdp.sendChipMap(self.TGmap)
 
-    # We can use sendSDP to control frequency, getting virtual core map, etc
-    def sendSDP(self,flags, tag, dp, dc, dax, day, cmd, seq, arg1, arg2, arg3, bArray):
-        """
-        The detail experiment with sendSDP() see mySDPinger.py
-        """
-        da = (dax << 8) + day
-        dpc = (dp << 5) + dc
-        sa = 0
-        spc = 255
-        pad = struct.pack('2B',0,0)
-        hdr = struct.pack('4B2H',flags,tag,dpc,spc,da,sa)
-        scp = struct.pack('2H3I',cmd,seq,arg1,arg2,arg3)
-        if bArray is not None:
-            sdp = pad + hdr + scp + bArray
-        else:
-            sdp = pad + hdr + scp
+    @QtCore.pyqtSlot()
+    def getSimulationTick(self):
+        simTick, ok = QtGui.QInputDialog.getInt(self, "Simulation Tick", "Enter Simulation Tick in microsecond", 1, 1, 10000000, 1)
+        if ok is True:
+            print "Sending tick {} microseconds".format(simTick)
+            self.sdp.sendSimTick(self.xSrc, self.ySrc, simTick)
 
-        CmdSock = QtNetwork.QUdpSocket()
-        CmdSock.writeDatagram(sdp, QtNetwork.QHostAddress(DEF.HOST), DEF.SEND_PORT)
-        return sdp
+    @QtCore.pyqtSlot()
+    def startSim(self):
+        self.actionStop.setEnabled(True)
+        self.actionStart.setEnabled(False)
+        self.sdp.sendStartCmd(self.xSrc, self.ySrc)
 
-    def closeEvent(self, event):
-        # Special treatment for uw
-        if self.action_Utilization.isChecked():
-            self.uw.okToClose = True
-            self.uw.close()
-
-    """
-    ############################# Helper Functions ##################################
-    """
-    def getChipIndex(self, cmap, x, y):
-        for i in range(self.nChips):
-            if cmap[i][0]==x and cmap[i][1]==y:
-                return i
-            
-
-
+    @QtCore.pyqtSlot()
+    def stopSim(self):
+        self.actionStop.setEnabled(False)
+        self.actionStart.setEnabled(True)
+        self.sdp.sendStopCmd(self.xSrc, self.ySrc)
 

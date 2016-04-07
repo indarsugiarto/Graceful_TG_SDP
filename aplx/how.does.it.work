@@ -1,0 +1,109 @@
+1. Every node is allocated in a corresponding SpiNNaker chip
+   A node ID is started from 0. And we assume linear node numbering!
+   Cannot be negative number, since cmd_rc is ushort (cmd_rc will contain nodeID for the packet data
+2. For now, tgsdp.aplx should be put in core-1
+   In the future, it can be allocated in any core in the chip.
+3. tgsdp.aplx will use port-1 for sending packet and port-2 for receiving packet and port-7 for receiving configuration data from tgsdp.py
+4. After "installed" by tgsdp.py in a chip, tgsdp.aplx will wait for its configuration from the host (also by tgsdp.py). So, tgsdp.py is responsible for:
+   reading XML, mapping the graph nodes to SpiNNaker chips, sending node's configuration to the corresponding chip
+
+
+=============================================================== How should a node send a packet ==================================================================
+- Using p2p setting, a node must know how to send a packet to a node with ID "id". So, it needs to transform from node-ID to a chip <x,y>
+- Basically a node (tgsdp.aplx) just need to know:
+  - how many target links it has
+  - how many dependants and their payload before "firing" each target link
+- Maybe it is also useful to keep the global information about node mapping (via CHIP_TO_NODE_MAP)? See below ("Regarding general mapping")
+==================================================================================================================================================================
+
+=============================================================== Regarding general mapping ========================================================================
+// Apa perlu menyimpan general knowledge about network mapping on spinnaker layout? Maybe, so let's keep it!
+// Remember: host-PC memang bertanggung jawab mecah data!!!
+For sending network configuration via sdp, the format is:
+cmd_rc = TGPKT_CHIP_NODE_MAP
+seq = number of nodes in the current list WITHOUT SOURCE/SINK node, digunakan untuk counter aja (buat extract dari msg->data)
+arg1 = SOURCE/SINK-ID (Biasanya aku set 0xFFFF)
+arg2 = chip_x of SOURCE/SINK node
+arg3 = chip_y of SOURCE/SINK node
+data[0:1] = ID node pertama
+data[2:3] = chip_x node pertama
+data[4:5] = chip_y node pertama
+data[6:7] = ID node kedua
+data[8:9] = chip_x node kedua
+data[10:11] = chip_y node kedua
+... etc
+==================================================================================================================================================================
+
+=============================================================== Regarding the source target ======================================================================
+cmd_rc = TGPKT_SOURCE_TARGET
+seq = target node ID
+arg1_high = x_chip dari target node
+arg1_low = y_chip dari target node
+arg2_high = unused
+arg2_low = banyaknya payload (pola kiriman paket)
+arg3_high = unused
+arg3_low = unused
+data[0:1] = pola/payload pertama
+data[1:2] = pola/payload kedua
+...dst
+// Untuk saat ini dibatasi kalau satu node target hanya melayani hingga maximum MAX_FAN pola pengiriman
+// IMPORTANT: sial, aku butuh informasi x_chip dan y_chip karena SOURCE/SINK chip tidak mengelola TGPKT_DEPENDENCY. tgsdp.py tidak mengirimkannya ke SOURCE/SINK chip!
+
+=============================================================== Regarding data structure ========================================================================
+We define data structures like these:
+
+typedef struct {
+	ushort destID;				// destination node-ID
+	ushort nPkt;				// number of packets it sends to the given destID-node at once
+	ushort nDependant;
+	uint data[MAX_WEIGHT];			// the real data container to be sent out, should be in sysram or sdram (in the future)
+} target_t;
+
+typedef struct {
+	ushort srcID;				// source node-ID
+	ushort nTriggerPkt;			// total number of expected triggering packets from this dependant
+	ushort pktCntr;				// the counter of current number of packets sent by srcID
+	uint data[MAX_WEIGHT];			// the real data container to buffer the data from srcID, should be in sysram or sdram (in the future)
+} dependency_t;
+
+typedef struct {
+	target_t target;
+	dependency_t dependency[MAX_DEPENDENCY];
+} output_t;
+
+And then we create a variable that store the target-independecy mapping as follows:
+
+
+output_t output[MAX_TARGET];			// each node may have one or several target_t data and each target data may require one or several dependeny_t data
+						// the first index is the node index itself, the second index is the target output of that node
+						// eg. output[2], means that *THIS* node is targeting the second node in its output list with given dependency data
+
+
+
+So, we send such a mapping information to node? tgsdp.py will send the configuration via:
+cmd_rc = TGPKT_DEPENDENCY
+seq = target index in the "output" list/variable; since the "output" has a fixed size, thus it knows this index already!
+arg1_high = current node ID, will be used to the chip, what is "your TGnode ID"
+arg1_low = target node ID, will go to target_t.destID
+arg2_high = number of packets it sends to the given destination AT ONCE (eq. 3 means 3 byte will be sent after THIS target link is triggered, actually I don't know what does this value mean)
+arg2_low = how many dependencies does this target link have, will go to target_t.nDependant
+arg3_high = the first dependant node-ID, it is possible that a node has only one dependant. Putting this here will help reducing the number of data in the SDP (omitting the data part of SDP)
+arg3_low = how many deliveries are expected from the first dependant
+data[0:1] = the second dependant node-ID (if any), OPTIONAL (see arg3_high above)
+data[2:3] = how many deliveries are expected from the second dependant (if any), OPTIONAL (see arg3_high above)
+... etc (up to 64 dependants, well, here we limit up to 10 (or MAX_FAN)), OPTIONAL (see arg3_high above)
+==================================================================================================================================================================
+
+
+
+We also have srcsink.aplx that handles both SOURCE and SINK nodes.
+In srcsink.aplx, SOURCE will send data periodically to destination nodes, and SINK will receive data from source nodes and then send to a host PC via iptag.
+
+
+======================================================= Regarding sending and receiving packets =====================================================================
+In general:
+cmd_rc is used to carry the source node ID (the node that sends the packet)
+seq is used to inform the receiver, how many packets (of uint) that are carried in the msg->data of the sdp
+arg1, arg2, arg3 are unused!
+
+=====================================================================================================================================================================

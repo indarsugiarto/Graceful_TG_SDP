@@ -1,0 +1,15 @@
+About the project.
+-----------------------------
+
+This tgsdp is an aplx to demonstrate Graceful task graph program that uses sdp for delivering data. This aplx is a company for the tgsdp.py with the following mechanism:
+
+tgsdp.py will read configuration from an XML file (a traffic generator) and generates an appropriate table of where the nodes will be assigned to SpiNNaker chips.
+tgsdp.py will also send the corresponding tgsdp.aplx to the appointed chips, start the node and tell the node about its configuration.
+tgsdp.py DOES NOT DO a broadcasting, it is responsible to determine where to send the data!!!
+
+If all nodes have been configured, tgsdp will trigger the SOURCE node (in chip<0,0> to start the operation)
+
+
+tgsdp.aplx is mainly responsible for sending and receiving traffic packets.
+
+There is another aplx program, srcsink.aplx, that manages SOURCE and SINK nodes. It will send data periodically to destination nodes, and will receive data from source nodes and then send to a host PC via iptag.
