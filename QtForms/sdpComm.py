@@ -59,16 +59,14 @@ class sdpComm(QtCore.QObject):
     def readRptSDP(self):
         """
         For reading SDP data from SpiNNaker
-        TODO: Terakhir disini!!!!!! 19 April 2016 jam 14:04
         """
         szData = self.RptSock.pendingDatagramSize()
         datagram, host, port = self.RptSock.readDatagram(szData)
 
         # See, where does it come from
         fmt = "<H4BH2B"
-        pad, flags, tag, dp, sp, da, sax, say = struct.unpack(fmt, datagram)
+        pad, flags, tag, dp, sp, da, say, sax = struct.unpack(fmt, datagram)
         self.histUpdate.emit([sax, say])
-        print "tick"
 
     def sendPing(self, map):
         for node in map:

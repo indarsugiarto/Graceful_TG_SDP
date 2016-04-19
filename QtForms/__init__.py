@@ -23,6 +23,7 @@ class MainWindow(QtGui.QMainWindow, QtMainWindow.Ui_qtMainWindow):
 
         self.vis = visWidget(self.mdiArea)
         self.vis.setGeometry(0,0,1024,1024)
+        #self.vis.scale(0.5,0.5) # put in half size
         self.vis.hide()
         self.action_Visualiser.setCheckable(True)
         #self.action_Visualiser.setChecked(False)
@@ -53,6 +54,7 @@ class MainWindow(QtGui.QMainWindow, QtMainWindow.Ui_qtMainWindow):
         else:
             self.statusTxt.setText("Using SpiNN-3 board at {}".format(DEF_HOST))
         """
+        self.setGeometry(0,0,1024,1024)
 
     @QtCore.pyqtSlot()
     def Quit(self):
@@ -64,7 +66,7 @@ class MainWindow(QtGui.QMainWindow, QtMainWindow.Ui_qtMainWindow):
         if self.action_Visualiser.isChecked() is True:
             #self.vis = visWidget(self.mdiArea)     # cuman buat sejarah kalau dulu aku letakkan di sini!
             #self.vis.setGeometry(0,0,1024,1024)
-            self.vis.sceneTimer.start(10)
+            self.vis.sceneTimer.start(500)
             self.vis.show()
         else:
             self.vis.hide()
@@ -227,7 +229,6 @@ class MainWindow(QtGui.QMainWindow, QtMainWindow.Ui_qtMainWindow):
         for node in self.output: # self.output should be a list of a list of a dict
             #print "Node =",node
             time.sleep(DEF_SDP_TIMEOUT)     # WEIRD!!!! If I remove this, then node-0 will be corrupted!!!
-            time.sleep(0.5)
             self.sdp.sendConfig(self.TGmap, node)
         print "done!"
 

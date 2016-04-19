@@ -183,7 +183,13 @@ void checkAllInput(uint targetIndex, uint arg1)
 	ushort x,y;
 	// if .nDependantReady is fullfiled, then generate output packets
 	if(output[targetIndex].target.nDependantReady == output[targetIndex].target.nDependant) {
-		spin1_send_sdp_msg(&histRpt, DEF_TIMEOUT);	// send a histogram ping
+		uint pingout = spin1_send_sdp_msg(&histRpt, DEF_TIMEOUT);	// send a histogram ping
+		/*
+		if(pingout == SUCCESS)
+			io_printf(IO_BUF, "Hist ping sent!\n");
+		else
+			io_printf(IO_BUF, "Hist ping fail!\n");
+		*/
 		for(i=0; i<nTotalNodes; i++) {
 			if(nodeMap[i].nodeID == targetID) {
 				x = nodeMap[i].x;
@@ -294,9 +300,12 @@ void c_main()
 	histRpt.tag = TGPKT_NODE_SEND_HIST_IPTAG;			// send via iptag 1
 	histRpt.srce_port = (DEF_SEND_PORT << 5) | DEF_CORE;	// might be change during run-time?
 	histRpt.srce_addr = spin1_get_chip_id();
-	histRpt.dest_port = DEF_CONF_PORT;
+	histRpt.dest_port = PORT_ETH;
 	histRpt.dest_addr = sv->dbg_addr;
-	histRpt.length = sizeof(sdp_hdr_t);					// just send a ping
+	histRpt.length = sizeof(sdp_hdr_t);
+	//histRpt.cmd_rc = TGPKT_NODE_SEND_HIST_RPT;
+	//histRpt.seq = 0;
+	//histRpt.length = sizeof(sdp_hdr_t) + sizeof(cmd_hdr_t);					// just send a ping
 
 
     spin1_callback_on (SDP_PACKET_RX, hSDP, PRIORITY_SDP);

@@ -1,5 +1,5 @@
 # For debugging:
-SHOW_PARSING_RESULT     = True
+SHOW_PARSING_RESULT     = False
 SINGLE_SIMULATION       = True
 DEF_MIN_TIMER_TICK      = 100               # in microsecond
 
