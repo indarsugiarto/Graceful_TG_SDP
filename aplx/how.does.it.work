@@ -32,9 +32,26 @@ data[6:7] = ID node kedua
 data[8:9] = chip_x node kedua
 data[10:11] = chip_y node kedua
 ... etc
+
+But, if send a "big" map, then one sdp packet will not sufficient. Hence, we modified as follows:
+cmd_rc = TGPKT_CHIP_NODE_MAP
+seq = number of nodes in the current list WITHOUT SOURCE/SINK node, digunakan untuk counter aja (buat extract dari msg->data)
+arg1 = SOURCE/SINK-ID (Biasanya aku set 0xFFFF)
+arg2 = chip_x of SOURCE/SINK node
+arg3 = chip_y of SOURCE/SINK node
+data[0:1] = ID node pertama
+data[2:3] = chip_x dan chip_y dari node pertama
+data[4:5] = ID node kedua
+data[6:7] = chip_x dan chip_y dari node kedua
+data[8:9] = ID node ketiga
+data[10:11] = chip_x dan chip_y dari node ketiga
+... etc
+jadi, informasi chip_x dan chip_y di 'compact' masing-masing hanya 1 byte
+
 ==================================================================================================================================================================
 
-=============================================================== Regarding the source target ======================================================================
+=============================================================== Regarding the source target: ADA REVISI ==========================================================
+Yang LAMA:
 cmd_rc = TGPKT_SOURCE_TARGET
 seq = target node ID
 arg1_high = x_chip dari target node
@@ -49,7 +66,20 @@ data[1:2] = pola/payload kedua
 // Untuk saat ini dibatasi kalau satu node target hanya melayani hingga maximum MAX_FAN pola pengiriman
 // IMPORTANT: sial, aku butuh informasi x_chip dan y_chip karena SOURCE/SINK chip tidak mengelola TGPKT_DEPENDENCY. tgsdp.py tidak mengirimkannya ke SOURCE/SINK chip!
 
-=============================================================== Regarding data structure ========================================================================
+REVISI yang BARU:
+cmd_rc = TGPKT_SOURCE_TARGET
+seq = target node ID, dalam hal ini adalah SOURCE/SINK ID
+arg1 = how many target nodes? eg. in dag0020.xml, it only has 1 target node (i.e., node-0)
+arg2, arg3 = not used!
+data[0] = target node ID of the first target
+data[1] = x_chip dari target node pertama
+data[2] = y_chip dari target node pertama
+data[3] = target node ID of the second target
+data[4] = x_chip dari target node pertama
+data[5] = y_chip dari target node pertama
+...dst
+
+========================================================= Regarding data structure and dependency list ===========================================================
 We define data structures like these:
 
 typedef struct {
@@ -105,5 +135,17 @@ In general:
 cmd_rc is used to carry the source node ID (the node that sends the packet)
 seq is used to inform the receiver, how many packets (of uint) that are carried in the msg->data of the sdp
 arg1, arg2, arg3 are unused!
+
+How does the SOURCE send packets?
+- It DOES NOT use target's dependency triggering values!!!
+- So basically, the SOURCE will stream a packet at one time to one (or more) target node(s). This packet may contain one or more uint.
+  In this example, let's use one uint and put it in msg->data. Later on, if required, this mechanism can be easily extended to contain more data. Hence, we keep using
+  msg->data instead of msg->arg(1-3) because of this.
+
+=====================================================================================================================================================================
+
+
+===================================================== Regarding sending data (for histogram) to host ================================================================
+The data will be sent to host on port DEF_CONF_PORT as a "ping" signal. It doesn't carry any payload.
 
 =====================================================================================================================================================================

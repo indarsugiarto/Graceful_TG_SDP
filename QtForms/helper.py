@@ -216,3 +216,37 @@ def experiment_dag0020():
 
     return dag0020
 
+def showParsingResult(Handler):
+    print "Link Payload (NodeID : TargetID (payload))"
+    for nodes in Handler.Nodes:
+        print nodes.Id, ":",
+        for target in nodes.Target:
+            print target.destId, "(", target.nPkt, ")",
+        print
+    print
+
+
+    print "Target Dependency (NodeID : TargetID (Dependants)"
+    for nodes in Handler.Nodes:
+        print nodes.Id, ":",
+        for target in nodes.Target:
+            print target.destId, "(",
+            for dep in target.Dep:
+                print dep.srcId,
+            print "), ",
+        print
+
+    print
+
+    print "Detailed Target Dependency\n---------------------------"
+    for n in range(Handler.NumberOfNodes):
+        print "number of Targets for node-{} = {}".format(n, Handler.Nodes[n].numTarget)
+        for t in range(Handler.Nodes[n].numTarget):
+            print "\tnumber of Dependencies for Target-{} in Node-{} = {}".format(t, n, Handler.Nodes[n].Target[t].nDependant)
+            for d in range(Handler.Nodes[n].Target[t].nDependant):
+                print "\t\tSource-ID-idx-{} = {}".format(d,Handler.Nodes[n].Target[t].Dep[d].srcId),
+            print
+            for d in range(Handler.Nodes[n].Target[t].nDependant):
+                print "\t\tnTriggerPkt-ID-idx-{} = {}".format(d,Handler.Nodes[n].Target[t].Dep[d].nTriggerPkt),
+            print
+        print "\n\n"

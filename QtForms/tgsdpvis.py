@@ -1,4 +1,5 @@
-from PyQt4 import Qt, QtGui
+from PyQt4 import Qt, QtGui, QtCore
+
 
 CHIP_LIST_48_0 = [[0,0],[1,0],[2,0],[3,0],[4,0],\
                   [0,1],[1,1],[2,1],[3,1],[4,1],[5,1],\
@@ -31,6 +32,30 @@ class visWidget(QtGui.QGraphicsView):
         #self.view = QtGui.QGraphicsView(self.scene, self)
         #self.view.show()
 
+        self.sceneTimer = QtCore.QTimer(self)
+        # self.cbChips.currentIndexChanged.connect(self.chipChanged)
+        self.sceneTimer.timeout.connect(self.sceneTimerTimeout)
+        #self.sceneTimer.start(1000) # will fire every 1000ms (every 1 sec)
+        self.on = False
+
+
+    @QtCore.pyqtSlot()
+    def sceneTimerTimeout(self):
+        """
+        Update the content of the scene
+        """
+        for i in range(48):
+            self.chips[i].setBrush(Qt.Qt.white)
+        """
+        self.on = not self.on
+        if self.on is True:
+            for i in range(48):
+                self.chips[i].setBrush(Qt.Qt.red)
+        else:
+            for i in range(48):
+                self.chips[i].setBrush(Qt.Qt.white)
+        """
+
 
     def drawLayout(self, mode):
         # Draw Spin5 chip layout
@@ -43,12 +68,17 @@ class visWidget(QtGui.QGraphicsView):
             # draw as logical layout
             self.chipIDTxt = [QtGui.QGraphicsTextItem() for _ in range(48)]
             self.edges = [[QtGui.QGraphicsLineItem() for _ in range(6)] for _ in range(48)]
+            self.chips = [QtGui.QGraphicsRectItem() for _ in range(48)]
             pen = QtGui.QPen()
             pen.setWidth(2)
             for i in range(48):
                 x = CHIP_LIST_48_0[i][0]
                 y = CHIP_LIST_48_0[i][1]
-                self.scene.addRect(x*xoffset,y*yoffset,w,h,pen)
+                self.chips[i].setRect(x*xoffset,y*yoffset,w,h)
+                self.chips[i].setPen(pen)
+                self.chips[i].setBrush(Qt.Qt.white)
+                self.scene.addItem(self.chips[i])
+                #self.scene.addRect(x*xoffset,y*yoffset,w,h,pen)
                 self.chipIDTxt[i].setPos(x*xoffset+30,y*yoffset+30)
                 txt = "%d,%d" % (CHIP_LIST_48_0[i][0], CHIP_LIST_48_0[i][1])
                 self.chipIDTxt[i].setPlainText(txt)
@@ -112,3 +142,15 @@ class visWidget(QtGui.QGraphicsView):
                         self.chipIDTxt[i].setPlainText(txt)
                         self.scene.addItem(self.chipIDTxt[i])
 
+    @QtCore.pyqtSlot(list)
+    def updateHist(self, xy):
+        """
+        This Slot should be connected to sdp.histUpdate
+        """
+        cId = getIdxFromXY(xy)
+        self.chips[cId].setBrush(Qt.Qt.red)
+
+def getIdxFromXY(xy):   # xy is a list
+    for i in range(48):
+        if CHIP_LIST_48_0[i]==xy:
+            return i

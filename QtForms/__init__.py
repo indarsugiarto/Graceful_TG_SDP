@@ -17,7 +17,15 @@ class MainWindow(QtGui.QMainWindow, QtMainWindow.Ui_qtMainWindow):
         self.setupUi(self)
         self.setCentralWidget(self.mdiArea)
         self.statusTxt = QtGui.QLabel("")
+        self.dagFile = QtGui.QLabel("")
+        self.statusBar().addWidget(self.dagFile)
         self.statusBar().addWidget(self.statusTxt)
+
+        self.vis = visWidget(self.mdiArea)
+        self.vis.setGeometry(0,0,1024,1024)
+        self.vis.hide()
+        self.action_Visualiser.setCheckable(True)
+        #self.action_Visualiser.setChecked(False)
 
         self.connect(self.action_Quit, QtCore.SIGNAL("triggered()"), QtCore.SLOT("Quit()"))
         self.connect(self.action_Load_XML, QtCore.SIGNAL("triggered()"), QtCore.SLOT("loadXML()"))
@@ -28,11 +36,23 @@ class MainWindow(QtGui.QMainWindow, QtMainWindow.Ui_qtMainWindow):
         self.connect(self.actionStart, QtCore.SIGNAL("triggered()"), QtCore.SLOT("startSim()"))
         self.connect(self.actionStop, QtCore.SIGNAL("triggered()"), QtCore.SLOT("stopSim()"))
 
+        self.simTick = 1000000      # default value that yield 1second resolution
         self.output = None          # this is a list of list of dict that contains target dependency data
+        """
         self.srcTarget = dict()     # this similar to self.output, but just contains target for SOURCE node
                                     # (as a dict of a list), e.g: from dag0020, srcTarget = {0: [4,3,2]}
+        """
+        self.srcTarget = list()     # now scrTarget becomes simpler, because we don't send the trigger's payload
         self.sdp = sdpComm()
+        self.sdp.histUpdate.connect(self.vis.updateHist)
         self.mc = MachineController(DEF_HOST)
+        """
+        self.mc.iptag_set(0,'192.168.240.2',17892,0,0) # prepare iptag for myTub, because boot in rig doesn't provide this
+        if DEF_HOST=='192.168.240.1':
+            self.statusTxt.setText("Using SpiNN-5 board at {}".format(DEF_HOST))
+        else:
+            self.statusTxt.setText("Using SpiNN-3 board at {}".format(DEF_HOST))
+        """
 
     @QtCore.pyqtSlot()
     def Quit(self):
@@ -41,9 +61,14 @@ class MainWindow(QtGui.QMainWindow, QtMainWindow.Ui_qtMainWindow):
 
     @QtCore.pyqtSlot()
     def showVisualiser(self):
-        self.vis = visWidget()
-        self.vis.setGeometry(0,0,1024,1024)
-        self.vis.show()
+        if self.action_Visualiser.isChecked() is True:
+            #self.vis = visWidget(self.mdiArea)     # cuman buat sejarah kalau dulu aku letakkan di sini!
+            #self.vis.setGeometry(0,0,1024,1024)
+            self.vis.sceneTimer.start(10)
+            self.vis.show()
+        else:
+            self.vis.hide()
+            self.vis.sceneTimer.stop()
 
 
     @QtCore.pyqtSlot()
@@ -53,6 +78,23 @@ class MainWindow(QtGui.QMainWindow, QtMainWindow.Ui_qtMainWindow):
         if not fullPathFileName:
             print "Cancelled!"
         else:
+            # Then ask for the appropriate map
+            cbItem = tg2spinMap.keys();
+            # simTick, ok = QtGui.QInputDialog.getInt(self, "Simulation Tick", "Enter Simulation Tick in microsecond", self.simTick, DEF_MIN_TIMER_TICK, 10000000, 1)
+
+            mapItem, ok = QtGui.QInputDialog.getItem(self, "Select Map", "Which map will be used?", cbItem, 0, False)
+            if ok is True:
+                print "Will use",mapItem
+                # self.initMap(mapItem)
+                self.TGmap = tg2spinMap[str(mapItem)]
+            else:
+                print "Cancelled!"
+                return
+
+            fi = QtCore.QFileInfo()
+            fi.setFile(fullPathFileName)
+            fn = fi.fileName()
+            self.dagFile.setText("Using {}".format(fn))
             print "Processing ", fullPathFileName
             parser = xml.sax.make_parser()
 
@@ -64,40 +106,9 @@ class MainWindow(QtGui.QMainWindow, QtMainWindow.Ui_qtMainWindow):
             parser.setContentHandler(Handler)
             parser.parse(str(fullPathFileName))
 
-            """ Debugging:
-            print "Link Payload"
-            for nodes in Handler.Nodes:
-                print nodes.Id, ":",
-                for target in nodes.Target:
-                    print target.destId, "(", target.nPkt, ")",
-                print
-            print
 
-
-            print "Target Dependency"
-            for nodes in Handler.Nodes:
-                print nodes.Id, ":",
-                for target in nodes.Target:
-                    print target.destId, "(",
-                    for dep in target.Dep:
-                        print dep.srcId,
-                    print "), ",
-                print
-
-
-            print "Target Dependency"
-            for n in range(Handler.NumberOfNodes):
-                print "nTarget for node-{} = {}".format(n, Handler.Nodes[n].numTarget)
-                for t in range(Handler.Nodes[n].numTarget):
-                    print "nDep for Target-{} in Node-{} = {}".format(t, n, Handler.Nodes[n].Target[t].nDependant)
-                    for d in range(Handler.Nodes[n].Target[t].nDependant):
-                        print "Source-ID-idx-{} = {}".format(d,Handler.Nodes[n].Target[t].Dep[d].srcId),
-                    print
-                    for d in range(Handler.Nodes[n].Target[t].nDependant):
-                        print "nTriggerPkt-ID-idx-{} = {}".format(d,Handler.Nodes[n].Target[t].Dep[d].nTriggerPkt),
-                    print
-                print "\n\n"
-            """
+            if SHOW_PARSING_RESULT:
+                showParsingResult(Handler)
 
             """ Let's put the c-like struct as a list:
                 Let's create a variable cfg, which is a list of a dict.
@@ -126,10 +137,10 @@ class MainWindow(QtGui.QMainWindow, QtMainWindow.Ui_qtMainWindow):
                     cfg.append(dct)
                     # and put the payload to the current word in the dict
                 if srcFound:
-                    self.srcTarget[nodes.Id] = srcPayload
+                    self.srcTarget.append(nodes.Id)
+                    # self.srcTarget[nodes.Id] = srcPayload --> ini yang lama sebelum aku REVISI
                 dag.append(cfg)
 
-            self.initMap()
             self.output = dag
             #self.output = experiment_dag0020()
 
@@ -140,34 +151,14 @@ class MainWindow(QtGui.QMainWindow, QtMainWindow.Ui_qtMainWindow):
             print "Source Target    :", self.srcTarget
 
 
-    def initMap(self):
-        # SOURCE and SINK send to chip<0,0>, since it is connected to ethernet
-        # node-0, send to chip<1,0> == map[1] in the CHIP_LIST_48
-        # node-1, send to chip<2,0> == map[2]
-        # node-2, send to chip<3,0> == map[3]
-        # node-3, send to chip<4,0> == map[4]
-        # node-4, send to chip<0,1> == map[5]
-        # node-5, send to chip<1,1> == map[6]
-        # node-6, send to chip<2,1> == map[7]
-        # node-7, send to chip<3,1> == map[8]
-        # node-8, send to chip<4,1> == map[9]
-        # let's put those in a "map" and "cfg" variables
-        # TODO (future): use rig to find out the available chips (undead ones?)
-
-        map = [-1 for _ in range(48)]
-        for i in range(9):
-            map[i+1] = i    # we start from i+1 because chip<0,0> will be used for SOURCE and SINK
-        map[0] = DEF_SOURCE_ID
-        self.TGmap = map
-
     @QtCore.pyqtSlot()
     def testSpin1(self):
         """
         send a request to dump tgsdp configuration data
         sendSDP(self, flags, tag, dp, dc, dax, day, cmd, seq, arg1, arg2, arg3, bArray):
         """
-        f=NO_REPLY
-        t=DEF_SEND_IPTAG
+        f = NO_REPLY
+        t = DEF_SEND_IPTAG
         p = DEF_SDP_CONF_PORT
         c = DEF_SDP_CORE
         m = TGPKT_HOST_ASK_REPORT
@@ -198,37 +189,66 @@ class MainWindow(QtGui.QMainWindow, QtMainWindow.Ui_qtMainWindow):
         for item in self.TGmap:
             if item != -1 and item != DEF_SOURCE_ID:
                 x, y = getChipXYfromID(self.TGmap, item)
-                appCores[(x,y)] = [1]
+                appCores[(x,y)] = [DEF_APP_CORE]
 
         print "Application cores :", appCores
-
+        allChips = dict()
+        for item in CHIP_LIST_48:
+            allChips[(item[0],item[1])] = [DEF_MON_CORE]
+        print "Monitor cores :", allChips
         # Second, send the aplx (tgsdp.aplx and srcsink.aplx) to the corresponding chip
         # example: mc.load_application("bla_bla_bla.aplx", {(0,0):[1,2,10,17]}, app_id=16)
         # so, the chip is a tupple and cores is in a list!!!
         # Do you want something nice? Use QFileDialog
-        print "Send the aplx to the corresponding chip..."
+
+        print "Send iptag...",
+        self.mc.iptag_set(DEF_TUBO_IPTAG,'192.168.240.2',DEF_TUBO_PORT,0,0) # prepare iptag for myTub, because boot in rig doesn't provide this
+        self.mc.iptag_set(DEF_REPORT_IPTAG, '192.168.240.2', DEF_REPORT_PORT,0,0)
+        if DEF_HOST=='192.168.240.1':
+            self.statusTxt.setText("Using SpiNN-5 board at {}".format(DEF_HOST))
+        else:
+            self.statusTxt.setText("Using SpiNN-3 board at {}".format(DEF_HOST))
+        print "done!"
+
+        print "Send the aplxs to the corresponding chips...",
         srcsinkaplx = "/local/new_home/indi/Projects/P/Graceful_TG_SDP_virtualenv/src/aplx/srcsink.aplx"
         tgsdpaplx = "/local/new_home/indi/Projects/P/Graceful_TG_SDP_virtualenv/src/aplx/tgsdp.aplx"
-        self.mc.load_application(srcsinkaplx, {(self.xSrc, self.ySrc):[1]}, app_id=APPID_SRCSINK)
+        monaplx = "/local/new_home/indi/Projects/P/Graceful_TG_SDP_virtualenv/src/aplx/monitor.aplx"
+        self.mc.load_application(srcsinkaplx, {(self.xSrc, self.ySrc):[DEF_APP_CORE]}, app_id=APPID_SRCSINK)
         self.mc.load_application(tgsdpaplx, appCores, app_id=APPID_TGSDP)
+        # self.mc.load_application(monaplx, allChips, app_id=APPID_MONITOR)
+        print "done!"
+
+        # Debugging: why some chips generate WDOG?
+        self.sdp.sendPing(self.TGmap)
 
         # Third, send the configuration to the corresponding node
-        print "Sending the configuration data to the corresponding chip..."
-
+        print "Sending the configuration data to the corresponding chip...",
         for node in self.output: # self.output should be a list of a list of a dict
+            #print "Node =",node
+            time.sleep(DEF_SDP_TIMEOUT)     # WEIRD!!!! If I remove this, then node-0 will be corrupted!!!
+            time.sleep(0.5)
             self.sdp.sendConfig(self.TGmap, node)
+        print "done!"
 
+        print "Sending special configuration to SOURCE/SINK node...",
         # TODO: send the source target list!!!
         self.sdp.sendSourceTarget(self.TGmap, self.srcTarget)   # butuh TGmap karena butuh xSrc dan ySrc
+        print "done! ---------- WAIT, Abaikan nilai payload-nya!!!! ------------"
+        # NOTE: di bagian sdp.sendSourceTarget() tidak aku ubah untuk akomodasi hal tersebut!!!!!!!!!
+        #       Jadi, sangat tergantung srcsink.c untuk betulin-nya!!!!
 
-        print "Sending network map..."
+        print "Sending network map...",
         self.sdp.sendChipMap(self.TGmap)
+        print "done!"
+
 
     @QtCore.pyqtSlot()
     def getSimulationTick(self):
-        simTick, ok = QtGui.QInputDialog.getInt(self, "Simulation Tick", "Enter Simulation Tick in microsecond", 1, 1, 10000000, 1)
+        simTick, ok = QtGui.QInputDialog.getInt(self, "Simulation Tick", "Enter Simulation Tick in microsecond", self.simTick, DEF_MIN_TIMER_TICK, 10000000, 1)
         if ok is True:
             print "Sending tick {} microseconds".format(simTick)
+            self.simTick = simTick
             self.sdp.sendSimTick(self.xSrc, self.ySrc, simTick)
 
     @QtCore.pyqtSlot()
@@ -241,5 +261,6 @@ class MainWindow(QtGui.QMainWindow, QtMainWindow.Ui_qtMainWindow):
     def stopSim(self):
         self.actionStop.setEnabled(False)
         self.actionStart.setEnabled(True)
-        self.sdp.sendStopCmd(self.xSrc, self.ySrc)
+        # self.sdp.sendStopCmd(self.xSrc, self.ySrc) #-> only to SOURCE/SINK node
+        self.sdp.sendStopCmd(self.xSrc, self.ySrc, self.TGmap)  #-> to all nodes
 

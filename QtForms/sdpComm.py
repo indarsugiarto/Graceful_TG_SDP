@@ -5,8 +5,11 @@ from helper import *
 import time
 
 class sdpComm(QtCore.QObject):
+    histUpdate = QtCore.pyqtSignal(list)  # for cmd communication
     def __init__(self, parent=None):
         super(sdpComm, self).__init__(parent)
+        self.RptSock = QtNetwork.QUdpSocket(self)
+        self.initSDPReceiver()
 
     def sendSDP(self, flags, tag, dp, dc, dax, day, cmd, seq, arg1, arg2, arg3, bArray):
         """
@@ -24,53 +27,75 @@ class sdpComm(QtCore.QObject):
         hdr = struct.pack('4B2H',flags,tag,dpc,spc,da,sa)
         scp = struct.pack('2H3I',cmd,seq,arg1,arg2,arg3)
         sdp = pad + hdr + scp
+        """
+        if bArray is not None:
+            sdp = pad + hdr + scp + bArray
+        else:
+            sdp = pad + hdr + scp
+        """
         if bArray is not None:
             for b in bArray:
-                sdp += struct.pack('B', b)
+                sdp += struct.pack('<B', b)
+                #sdp += b
+
 
         CmdSock = QtNetwork.QUdpSocket()
         CmdSock.writeDatagram(sdp, QtNetwork.QHostAddress(DEF_HOST), DEF_SEND_PORT)
+        time.sleep(DEF_SDP_TIMEOUT)
         return sdp
+
+
+    def initSDPReceiver(self):
+        print "Try opening port-{} for receiving report...".format(DEF_REPORT_PORT),
+        #result = self.sock.bind(QtNetwork.QHostAddress.LocalHost, DEF.RECV_PORT) --> problematik dengan penggunaan LocalHost
+        result = self.RptSock.bind(DEF_REPORT_PORT)
+        if result is False:
+            print 'failed! Cannot open UDP port-{}'.format(DEF_REPORT_PORT)
+        else:
+            print "done!"
+            self.RptSock.readyRead.connect(self.readRptSDP)
+
+    @QtCore.pyqtSlot()
+    def readRptSDP(self):
+        """
+        For reading SDP data from SpiNNaker
+        TODO: Terakhir disini!!!!!! 19 April 2016 jam 14:04
+        """
+        szData = self.RptSock.pendingDatagramSize()
+        datagram, host, port = self.RptSock.readDatagram(szData)
+
+        # See, where does it come from
+        fmt = "<H4BH2B"
+        pad, flags, tag, dp, sp, da, sax, say = struct.unpack(fmt, datagram)
+        self.histUpdate.emit([sax, say])
+        print "tick"
+
+    def sendPing(self, map):
+        for node in map:
+            if node != -1:
+                x,y = getChipXYfromID(map, node)
+                self.sendSDP(NO_REPLY, DEF_SEND_IPTAG, DEF_SDP_CONF_PORT, DEF_SDP_CORE, x, y, TGPKT_PING, 0, 0, 0, 0, None)
+                time.sleep(DEF_SDP_TIMEOUT)
 
     def sendSourceTarget(self, map, srcTarget):
         """
-        srcTarget is a dict of a list. Eg., in dag0020, it looks like: srcTarget = {0: [4,3,2]}
         to send it to the SOURCE node in spinnaker, we need to provide the target's chip coordinate as well!
-
-cmd_rc = TGPKT_SOURCE_TARGET
-seq = target node ID
-arg1_high = x_chip dari target node
-arg1_low = y_chip dari target node
-arg2_high = unused
-arg2_low = banyaknya payload (pola kiriman paket)
-arg3_high = unused
-arg3_low = unused
-data[0:1] = pola/payload pertama
-data[1:2] = pola/payload kedua
-...dst
-// Untuk saat ini dibatasi kalau satu node target hanya melayani hingga maximum MAX_FAN pola pengiriman
-// IMPORTANT: sial, aku butuh informasi x_chip dan y_chip karena SOURCE/SINK chip tidak mengelola TGPKT_DEPENDENCY. tgsdp.py tidak mengirimkannya ke SOURCE/SINK chip!
-
         """
-        # TODO: complete me!!!!!!!!
-        # TODO: Ingat, kiriman ke SOURCE/SINK node harus dilengkapi dengan x_chip dan y_chip dari targetnya!!!!
+        # TODO: Ingat, kiriman ke SOURCE/SINK node harus dilengkapi dengan x_chip dan y_cTGPKT_PINGhip dari targetnya!!!!
+        # Dan tidak perlu melibatkan trigger payload dari targetnya!
         xSrc, ySrc = getChipXYfromID(map, DEF_SOURCE_ID)    # get the x and y of SOURCE node
+        bArray = list()
         for node in srcTarget:  # then node is the "key" in the dictionary
             x,y = getChipXYfromID(map, node)                # get the x and y of the target node of the SOURCE
-            arg1 = (x << 16) | y
-            arg2 = len(srcTarget[node])
+            bArray.append(node)
+            bArray.append(x)
+            bArray.append(y)
 
-            bArray = list()                                 # contains the weight/payload for each link to the target
-            for b in range(arg2):
-                s = struct.pack('<H',srcTarget[node][b])    # convert to ushort
-                L = struct.unpack('<BB',s)                  # split to two bytes
-                for l in L:
-                    bArray.append(l)    # and with conversion to ushort
-
-            print "Sending source target ID-{} at <{},{}> :".format(node, x,y),
-            print bArray
-            self.sendSDP(NO_REPLY, DEF_SEND_IPTAG, DEF_SDP_CONF_PORT, DEF_SDP_CORE, xSrc, ySrc, TGPKT_SOURCE_TARGET,
-                         node, arg1, arg2, 0, bArray)
+        #print "Sending source target:",
+        #print bArray
+        seq = DEF_SOURCE_ID
+        arg1 = len(srcTarget)
+        self.sendSDP(NO_REPLY, 0, DEF_SDP_CONF_PORT, DEF_SDP_CORE, xSrc, ySrc, TGPKT_SOURCE_TARGET, seq, arg1, 0, 0, bArray)
 
 
     def sendConfig(self, map, cfg):
@@ -120,12 +145,12 @@ data[1:2] = pola/payload kedua
                     for item in l:
                         dep.append(item)    # and with conversion to ushort
                 #bArray = bytearray(dep)
-                    bArray = dep
+                bArray = dep
             else:
                 bArray = None
 
             # finally, send this particular output link to SpiNNaker
-            #print "bArray =", bArray
+            #print "\nSend dep to <{},{}> with bArray = {}".format(dax,day,bArray)
             self.sendSDP(NO_REPLY, DEF_SEND_IPTAG, DEF_SDP_CONF_PORT, DEF_SDP_CORE, dax, day,\
                          cmd, seq, arg1, arg2, arg3, bArray)
             time.sleep(DEF_SDP_TIMEOUT)
@@ -137,6 +162,8 @@ data[1:2] = pola/payload kedua
         Send TGnodes to SpiNN-chips map
         map is a 1D list contains mapping from SPiNNaker-chipID to TG-nodeID. In dag0020, it looks like:
         [65535,0,1,2,3,4,5,6,7,8,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1]
+
+        At 14.Apr.2016: I found: if the number of nodes is big, then it is not possible to put them in a single SDP
         """
         # first, build the list and count how many nodes are there
         xSrc, ySrc = getChipXYfromID(map, DEF_SOURCE_ID)
@@ -148,25 +175,33 @@ data[1:2] = pola/payload kedua
             else:
                 nNode += 1
                 x,y = getChipXYfromID(map, item)
-                S = struct.pack('<HHH',item,x,y)
-                L = struct.unpack('<BBBBBB',S)
+                S = struct.pack('<HBB',item,x,y)
+                L = struct.unpack('<BBBB',S)
                 for l in L:
                     lNode.append(l)
 
-        # print "nNode =", nNode
+        print "nNode =", nNode
+        print "lNode =", lNode
         # print "Sending map as:", lNode
-        # second, send to the SOURCE node
-        self.sendSDP(NO_REPLY, DEF_SEND_IPTAG,DEF_SDP_CONF_PORT, DEF_SDP_CORE, xSrc, ySrc,
-                     TGPKT_CHIP_NODE_MAP, nNode, DEF_SOURCE_ID, xSrc, ySrc, lNode)
-
-        # then, also to other nodes
+        # second, send to all nodes, including SOURCE/SINK
         for item in map:
-            if item==DEF_SOURCE_ID or item==-1:
-                continue
-            else:
+            if item != -1:  # for all nodes, including SOURCE/SINK
                 x,y = getChipXYfromID(map, item)
+                #print "Sending nodeMap to <{},{}>".format(x,y)
+                f = NO_REPLY
+                t = DEF_SEND_IPTAG
+                p = DEF_SDP_CONF_PORT
+                c = DEF_SDP_CORE
+                cmd_rc = TGPKT_CHIP_NODE_MAP
+                seq = nNode
+                arg1 = DEF_SOURCE_ID
+                arg2 = xSrc
+                arg3 = ySrc
+                #self.sendSDP(f,t,p,c,x,y,cmd_rc,seq,arg1,arg2,arg3,None)
                 self.sendSDP(NO_REPLY, DEF_SEND_IPTAG, DEF_SDP_CONF_PORT, DEF_SDP_CORE, x, y,
                          TGPKT_CHIP_NODE_MAP, nNode,DEF_SOURCE_ID,xSrc,ySrc,lNode)
+                time.sleep(DEF_SDP_TIMEOUT)
+
 
 
     def sendSimTick(self, xSrc, ySrc, tick):
@@ -176,6 +211,14 @@ data[1:2] = pola/payload kedua
     def sendStartCmd(self, xSrc, ySrc):
         self.sendSDP(NO_REPLY, DEF_SEND_IPTAG, DEF_SDP_CONF_PORT, DEF_SDP_CORE, xSrc, ySrc, TGPKT_START_SIMULATION,0,0,0,0,None)
 
-    def sendStopCmd(self, xSrc, ySrc):
+    def sendStopCmd(self, xSrc, ySrc, map=None):
         self.sendSDP(NO_REPLY, DEF_SEND_IPTAG, DEF_SDP_CONF_PORT, DEF_SDP_CORE, xSrc, ySrc, TGPKT_STOP_SIMULATION,0,0,0,0,None)
+        # then, also to other nodes
+        if map is not None:
+            for item in map:
+                if item==DEF_SOURCE_ID or item==-1:
+                    continue
+                else:
+                    x,y = getChipXYfromID(map, item)
+                    self.sendSDP(NO_REPLY, DEF_SEND_IPTAG, DEF_SDP_CONF_PORT, DEF_SDP_CORE, x, y, TGPKT_STOP_SIMULATION,0,0,0,0,None)
 

@@ -5,7 +5,10 @@ CONFIG -= qt
 
 SOURCES += tgsdp.c \
     srcsink.c \
-    helper.c
+    helper.c \
+    museum/old-tgsdp.c-with_many-debugging.c \
+    monitor.c \
+    museum/old-srcsink.c-with_many-debugging.c
 
 
 INCLUDEPATH += /opt/spinnaker_tools_134/include

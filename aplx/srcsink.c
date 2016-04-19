@@ -3,33 +3,71 @@
 #include "tgsdp.h"
 
 uint collectedPktOut = 0;				// will be increased when it receives data through SINK port
-uchar nSrcTarget;						// how many target nodes the SOURCE will be serving to?
+ushort nSrcTarget;						// how many target nodes the SOURCE will be serving to?
 nodemap_t srcTarget[MAX_FAN];			// put those target nodes in this variable
+
+uint sdpSendcntr = 0;
+
+ushort buildMap(sdp_msg_t *msg, nodemap_t *nodeMap)
+{
+	io_printf(IO_STD, "Node-%u at<%u,%u> builds the nodemap\n", myNodeID, sark_chip_id() >> 8, sark_chip_id() & 0xFF); sark_delay_us(1000*sark_chip_id());
+	ushort i;
+	ushort nTaskNodes = msg->seq;
+	nodeMap[0].nodeID = (ushort)msg->arg1;
+	nodeMap[0].x = (ushort)msg->arg2;
+	nodeMap[0].y = (ushort)msg->arg3;
+
+	for(i=0; i<nTaskNodes; i++) {
+		spin1_memcpy((void *)&nodeMap[i+1].nodeID, (void *)&msg->data[i*4], 2);
+		nodeMap[i+1].x = msg->data[i*4+2];
+		nodeMap[i+1].y = msg->data[i*4+3];
+	}
+	return nTaskNodes;
+}
+
+// generateData() should be a "virtual" function that depends on the application itself
+void generateData(uchar *container, ushort N)
+{
+	ushort i;
+	uint data;
+	// in this experiment, let's generate N-random data
+	for(i=0; i<N; i++) {
+		data = sark_rand();
+		spin1_memcpy((void *)&container[i*sizeof(uint)], (void *)&data, sizeof(uint));
+	}
+}
 
 /* handler for timer event */
 void hTimer(uint tick, uint unused)
 {
+	if(tick % simulationTick != 0) return;	// due to spin1_api mechanism
 	simulationCntr++;
 	// Then send packets to client nodes
 	ushort i, j, k;
 	uint data;
+	// for all target nodes (maybe in different chips)
 	for(i=0; i<nSrcTarget; i++) {
-		// TODO: lanjutkan dakuuuuuu!!!!!!!
 		packet.dest_addr = (srcTarget[i].x << 8) + srcTarget[i].y;
-		for(j=0; j<srcTarget[i].optLen; j++) {	// for all pattern for the current srcTarget
-			packet.seq = srcTarget[i].opt[j];	// seq contains the length of pattern-j, which is contained in the opt variable
+		//for(j=0; j<srcTarget[i].optLen; j++) {		// for all pattern for the current srcTarget
+		for(j=0; j<1; j++) {	// NEW REVISION: one node target will receive only ONE packet at a time, and it is its responsible to distribute it to its output target
+			//packet.seq = srcTarget[i].opt[j];	// seq contains the length of pattern-j, which is contained in the opt variable
+			packet.seq = DEF_PACKET_LENGTH;				// NEW REVISION: every triggering might only send "1 uint" packet
 			packet.length = sizeof(sdp_hdr_t)+sizeof(cmd_hdr_t)+packet.seq*sizeof(uint);
-			for(k=0; k<packet.seq; k++){
-				data = sark_rand();
-				spin1_memcpy((void *)&packet.data[k*sizeof(uint)], (void *)&data, sizeof(uint));
-			}
+			generateData(packet.data, packet.seq);		// use "virtual" method to generate data!
 			spin1_send_sdp_msg(&packet, DEF_TIMEOUT);
-			io_printf(IO_BUF, "Sending to node-%u at <%u,%u> with data: [ ", srcTarget[i].nodeID, srcTarget[i].x, srcTarget[i].y);
-			for(k=0; k<packet.seq; k++) {
-				spin1_memcpy((void *)&data, (void *)&packet.data[k*sizeof(uint)], sizeof(uint));
-				io_printf(IO_BUF, "0x%x ", data);
+			sdpSendcntr++;	// just for debugging
+
+			// The following is just for debugging -> will be removed later!
+			if((simulationCntr * DEF_MINIMUM_TICK * simulationTick) % 1000000 == 0) {
+				char *stream;
+				stream = (char *)IO_STD;
+				io_printf(stream, "[Sim-%u] Sending packet to node-%u at <%u,%u> with data: [ ", simulationCntr, srcTarget[i].nodeID, srcTarget[i].x, srcTarget[i].y); spin1_delay_us(1000);
+				for(k=0; k<packet.seq; k++) {
+					spin1_memcpy((void *)&data, (void *)&packet.data[k*sizeof(uint)], sizeof(uint));
+					io_printf(stream, "0x%x ", data); spin1_delay_us(1000);
+				}
+				io_printf(stream, "]\n"); spin1_delay_us(1000);
 			}
-			io_printf(IO_BUF, "]\n");
 		}
 	}
 }
@@ -37,72 +75,40 @@ void hTimer(uint tick, uint unused)
 /* handler for SDP event, especially for retrieving configuration and also in case of SINK data */
 void hSDP(uint mBox, uint port)
 {
+	//io_printf(IO_STD, "Node-%u at<%d,%d> recv something...\n", myNodeID, sark_chip_id() >> 8, sark_chip_id() & 0xFF); spin1_delay_us(1000*sark_chip_id());
 	sdp_msg_t *msg = (sdp_msg_t *)mBox;
 	if(port==DEF_CONF_PORT) {				// retrieve configuration (network map?) from host
 		// host send adjacency matrix? to fill up the CHIP_TO_NODE_MAP table.
-		if(msg->cmd_rc==TGPKT_CHIP_NODE_MAP) {
-			ushort i;
-			nTaskNodes = msg->seq;
-			nTotalNodes = msg->seq+1;
-			myNodeID = (ushort)msg->arg1;
-			nodeMap[0].nodeID = (ushort)msg->arg1;
-			nodeMap[0].x = (ushort)msg->arg2;
-			nodeMap[0].y = (ushort)msg->arg3;
-			// TODO: what happened if arg2 and arg3 != myChipID?
+		if(msg->cmd_rc==TGPKT_PING) {
+			io_printf(IO_BUF, "Chip<%d,%d> receives TGPKT_PING from port-%d\n",msg->dest_addr>>8, msg->dest_addr & 0xFF, port);
+		}
+		else if(msg->cmd_rc==TGPKT_CHIP_NODE_MAP) {
+			//io_printf(IO_STD, "Node-%u at<%d,%d> recv something...\n", myNodeID, sark_chip_id() >> 8, sark_chip_id() & 0xFF); spin1_delay_us(1000*sark_chip_id());
+			//spin1_msg_free(msg); return;
 
-			for(i=0; i<nTaskNodes; i++) {
-				spin1_memcpy((void *)&nodeMap[i+1].nodeID, (void *)&msg->data[i*6], 2);
-				spin1_memcpy((void *)&nodeMap[i+1].x, (void *)&msg->data[i*6+2], 2);
-				spin1_memcpy((void *)&nodeMap[i+1].y, (void *)&msg->data[i*6+4], 2);
-				//CHIP_TO_NODE_MAP[x][y] = id;
-			}
+			nTaskNodes = buildMap(msg, nodeMap);
+			nTotalNodes = nTaskNodes+1;
 			// let's test it:
 			spin1_schedule_callback(printMap, SOURCE_SINK_NODE_ID, 0, PRIORITY_REPORTING);
 		}
-		// if host send dependency map, then build the list of target nodes
-		if(msg->cmd_rc==TGPKT_SOURCE_TARGET) {
+		// if host send the list of target nodes
+		else if(msg->cmd_rc==TGPKT_SOURCE_TARGET) {
 			ushort i;
-			if(nSrcTarget==0) {
-				srcTarget[0].nodeID = msg->seq;
-				srcTarget[0].optLen = (ushort)msg->arg2;
-				//void splitUintToUshort(uint dIn, ushort *dLow, ushort *dHigh) {
-				splitUintToUshort(msg->arg1, &srcTarget[0].y, &srcTarget[0].x);
-				spin1_memcpy((void *)srcTarget[0].opt, (void *)msg->data, srcTarget[0].optLen*sizeof(ushort));
-				nSrcTarget++;
-			}
-			else {
-				uchar found = 0;
-				for(i=0; i<nSrcTarget; i++) {
-					if(srcTarget[i].nodeID == msg->seq) {
-						splitUintToUshort(msg->arg1, &srcTarget[i].y, &srcTarget[i].x);
-						srcTarget[i].optLen = (ushort)msg->arg2;
-						spin1_memcpy((void *)srcTarget[i].opt, (void *)msg->data, srcTarget[i].optLen*sizeof(ushort));
-						found = 1;
-						break;
-					}
-				}
-				if(found==0) {	// new data is sent by host
-					srcTarget[nSrcTarget].nodeID = msg->seq;
-					srcTarget[nSrcTarget].optLen = (ushort)msg->arg2;
-					splitUintToUshort(msg->arg1, &srcTarget[nSrcTarget].y, &srcTarget[nSrcTarget].x);
-					spin1_memcpy((void *)srcTarget[nSrcTarget].opt, (void *)msg->data, srcTarget[nSrcTarget].optLen*sizeof(ushort));
-					nSrcTarget++;
-				}
+			myNodeID = msg->seq;
+			io_printf(IO_STD, "srcsink is running in chip<%d,%d> with ID-%u\n", sark_chip_id() >> 8, sark_chip_id() & 0xFF, myNodeID);
+			nSrcTarget = msg->arg1;
+			for(i=0; i<nSrcTarget; i++) {
+				srcTarget[i].nodeID = (ushort)msg->data[i*3];
+				srcTarget[i].x = (ushort)msg->data[i*3+1];
+				srcTarget[i].y = (ushort)msg->data[i*3+2];
 			}
 			// let's test it
 			spin1_schedule_callback(printSOURCEtarget, 0, 0, PRIORITY_REPORTING);
 		}
 		else if(msg->cmd_rc==TGPKT_HOST_SEND_TICK) {
-			simulationTick = msg->arg1;
-			spin1_set_timer_tick(simulationTick);
-			if(simulationRunning==1) {
-				spin1_callback_off(TIMER_TICK);
-				spin1_callback_on(TIMER_TICK, hTimer, PRIORITY_TIMER);
-			}
+			simulationTick = msg->arg1/DEF_MINIMUM_TICK;
 		}
 		else if(msg->cmd_rc==TGPKT_START_SIMULATION) {
-			simulationCntr = 0;
-			collectedPktOut = 0;
 			simulationRunning = 1;
 			spin1_callback_on(TIMER_TICK, hTimer, PRIORITY_TIMER);
 		}
@@ -111,10 +117,15 @@ void hSDP(uint mBox, uint port)
 			spin1_callback_off(TIMER_TICK);
 			io_printf(IO_BUF, "Have been running for %u simulation!\n", simulationCntr);
 			io_printf(IO_BUF, "Have been receiving %u output packets!\n", collectedPktOut);	// do we need to send to host?
+			// reset counter
+			simulationCntr = 0;
+			collectedPktOut = 0;
+			sdpSendcntr = 0;
 		}
 	}
 	else if(port==DEF_RECV_PORT) {			// work as a SINK
-
+		io_printf(IO_BUF, "Receiving %u-packets from node-%u\n", msg->seq, msg->cmd_rc);
+		collectedPktOut++;
 	}
 	spin1_msg_free(msg);
 }
@@ -123,9 +134,7 @@ void printSOURCEtarget(uint arg0, uint arg1)
 {
 	ushort i, j;
 	for(i=0; i<nSrcTarget; i++) {
-		io_printf(IO_BUF, "Source target-ID = %u at <%u,%u> : [ ", srcTarget[i].nodeID, srcTarget[i].x, srcTarget[i].y);
-		for(j=0; j<srcTarget[i].optLen; j++) io_printf(IO_BUF, "%u ", srcTarget[i].opt[j]);
-		io_printf(IO_BUF, "]\n\n");
+		io_printf(IO_STD, "Source target-ID %u is at <%u,%u>\n", srcTarget[i].nodeID, srcTarget[i].x, srcTarget[i].y); spin1_delay_us(1000);
 	}
 }
 
@@ -134,7 +143,7 @@ void c_main()
 	simulationRunning = 0;
 	simulationTick = DEF_SIMULATION_TIME;
 	sark_srand ((sark_chip_id () << 8) + sark_core_id() * sv->time_ms); // Init randgen, will be used to generate random data packet
-	io_printf(IO_STD, "srcsink is running in core-%d\n", sark_core_id());
+	//io_printf(IO_STD, "srcsink is running in core-%d\n", sark_core_id());
 	/* initialize packet carrier*/
 	packet.cmd_rc = SOURCE_SINK_NODE_ID;				// tell the receiver, who I am
 	packet.flags = 0x07;								// no reply is needed
@@ -144,7 +153,7 @@ void c_main()
 	packet.dest_port = (DEF_RECV_PORT << 5) | DEF_CORE;	// might be change during run-time?
 	// items not yet set here: length, dest_addr, seq, arg1, arg2, arg3, and the data
 
-	spin1_set_timer_tick(simulationTick);
+	spin1_set_timer_tick(DEF_MINIMUM_TICK);	// due to spin1_api that doesn't allow time scalling during runtime
 	spin1_callback_on(SDP_PACKET_RX, hSDP, PRIORITY_SDP);
 	spin1_start(SYNC_NOWAIT);
 }
