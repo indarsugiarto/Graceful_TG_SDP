@@ -1,0 +1,56 @@
+  <TrafficList>
+
+    <TrafficElement>
+      <nodeId>0</nodeId>
+      <target>
+        <targetId>1</targetId>
+        <outputPackets>3</outputPackets>
+        <dependency>
+          <sourceType>source</sourceType>
+          <sourceId>SOURCE</sourceId>
+          <triggerPackets>4</triggerPackets>
+        </dependency>
+      </target>
+    </TrafficElement>
+
+    <TrafficElement>
+      <nodeId>1</nodeId>
+      <target>
+        <targetId>2</targetId>
+        <outputPackets>3</outputPackets>
+        <dependency>
+          <sourceType>node</sourceType>
+          <sourceId>0</sourceId>
+          <triggerPackets>4</triggerPackets>
+        </dependency>
+      </target>
+    </TrafficElement>
+
+    <TrafficElement>
+      <nodeId>2</nodeId>
+      <target>
+        <targetId>3</targetId>
+        <outputPackets>2</outputPackets>
+        <dependency>
+          <sourceType>node</sourceType>
+          <sourceId>1</sourceId>
+          <triggerPackets>2</triggerPackets>
+        </dependency>
+      </target>
+    </TrafficElement>
+
+    <TrafficElement>
+      <nodeId>3</nodeId>
+      <target>
+        <targetId>SINK</targetId>
+        <outputPackets>2</outputPackets>
+        <dependency>
+          <sourceType>node</sourceType>
+          <sourceId>2</sourceId>
+          <triggerPackets>3</triggerPackets>
+        </dependency>
+      </target>
+    </TrafficElement>
+
+  </TrafficList>
+

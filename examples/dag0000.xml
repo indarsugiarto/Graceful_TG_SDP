@@ -1,0 +1,122 @@
+  <TrafficList>
+
+    <TrafficElement>
+      <nodeId>0</nodeId>
+      <target>
+        <targetId>1</targetId>
+        <outputPackets>1</outputPackets>
+        <dependency>
+          <sourceType>source</sourceType>
+          <sourceId>SOURCE</sourceId>
+          <triggerPackets>1</triggerPackets>
+        </dependency>
+      </target>
+    </TrafficElement>
+
+    <TrafficElement>
+      <nodeId>1</nodeId>
+      <target>
+        <targetId>2</targetId>
+        <outputPackets>1</outputPackets>
+        <dependency>
+          <sourceType>node</sourceType>
+          <sourceId>0</sourceId>
+          <triggerPackets>1</triggerPackets>
+        </dependency>
+      </target>
+    </TrafficElement>
+
+    <TrafficElement>
+      <nodeId>2</nodeId>
+      <target>
+        <targetId>3</targetId>
+        <outputPackets>1</outputPackets>
+        <dependency>
+          <sourceType>node</sourceType>
+          <sourceId>1</sourceId>
+          <triggerPackets>1</triggerPackets>
+        </dependency>
+      </target>
+    </TrafficElement>
+
+    <TrafficElement>
+      <nodeId>3</nodeId>
+      <target>
+        <targetId>4</targetId>
+        <outputPackets>1</outputPackets>
+        <dependency>
+          <sourceType>node</sourceType>
+          <sourceId>2</sourceId>
+          <triggerPackets>1</triggerPackets>
+        </dependency>
+      </target>
+    </TrafficElement>
+
+    <TrafficElement>
+      <nodeId>4</nodeId>
+      <target>
+        <targetId>5</targetId>
+        <outputPackets>1</outputPackets>
+        <dependency>
+          <sourceType>node</sourceType>
+          <sourceId>3</sourceId>
+          <triggerPackets>1</triggerPackets>
+        </dependency>
+      </target>
+    </TrafficElement>
+
+    <TrafficElement>
+      <nodeId>5</nodeId>
+      <target>
+        <targetId>6</targetId>
+        <outputPackets>1</outputPackets>
+        <dependency>
+          <sourceType>node</sourceType>
+          <sourceId>4</sourceId>
+          <triggerPackets>1</triggerPackets>
+        </dependency>
+      </target>
+    </TrafficElement>
+
+    <TrafficElement>
+      <nodeId>6</nodeId>
+      <target>
+        <targetId>7</targetId>
+        <outputPackets>1</outputPackets>
+        <dependency>
+          <sourceType>node</sourceType>
+          <sourceId>5</sourceId>
+          <triggerPackets>1</triggerPackets>
+        </dependency>
+      </target>
+    </TrafficElement>
+
+    <TrafficElement>
+      <nodeId>7</nodeId>
+      <target>
+        <targetId>8</targetId>
+        <outputPackets>1</outputPackets>
+        <dependency>
+          <sourceType>node</sourceType>
+          <sourceId>6</sourceId>
+          <triggerPackets>1</triggerPackets>
+        </dependency>
+      </target>
+    </TrafficElement>
+
+    <TrafficElement>
+      <nodeId>8</nodeId>
+      <target>
+        <targetId>SINK</targetId>
+        <outputPackets>1</outputPackets>
+        <dependency>
+          <sourceType>node</sourceType>
+          <sourceId>7</sourceId>
+          <triggerPackets>1</triggerPackets>
+        </dependency>
+      </target>
+    </TrafficElement>
+
+  </TrafficList>
+
+
