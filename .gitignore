@@ -1,0 +1,9 @@
+#Ignore pycharm-generated files
+.idea/
+
+#Ignore object or archieve
+*.[oa]
+
+#Ignore temporary files (if any)
+*~
+
