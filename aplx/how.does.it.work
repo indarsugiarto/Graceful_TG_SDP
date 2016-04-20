@@ -7,6 +7,9 @@
 4. After "installed" by tgsdp.py in a chip, tgsdp.aplx will wait for its configuration from the host (also by tgsdp.py). So, tgsdp.py is responsible for:
    reading XML, mapping the graph nodes to SpiNNaker chips, sending node's configuration to the corresponding chip
 
+============================================= About Monitor Node ===============================================
+Since source/sink node is not very busy, let's put the monitoring task in this node!
+______________________________________________________________________________________end: About Monitor Node___
 
 =============================================================== How should a node send a packet ==================================================================
 - Using p2p setting, a node must know how to send a packet to a node with ID "id". So, it needs to transform from node-ID to a chip <x,y>
